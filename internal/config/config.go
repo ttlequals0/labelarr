@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,25 +22,43 @@ type Config struct {
 	RemoveMode          string
 	TMDbReadAccessToken string
 	ProcessTimer        time.Duration
-	
+
 	// Radarr configuration
 	RadarrURL    string
 	RadarrAPIKey string
 	UseRadarr    bool
-	
+
 	// Sonarr configuration
 	SonarrURL    string
 	SonarrAPIKey string
 	UseSonarr    bool
-	
+
 	// Logging configuration
 	VerboseLogging bool
-	
+
 	// Storage configuration
 	DataDir string
-	
+
 	// Force update configuration
 	ForceUpdate bool
+
+	// Webhook configuration
+	WebhookEnabled  bool
+	WebhookPort     int
+	WebhookDebounce time.Duration
+
+	// Keyword prefix configuration
+	KeywordPrefix string
+
+	// Batch processing configuration
+	BatchSize  int
+	BatchDelay time.Duration
+	ItemDelay  time.Duration
+
+	// Export configuration
+	ExportLabels   []string
+	ExportLocation string
+	ExportMode     string
 }
 
 // Load loads configuration from environment variables
@@ -55,26 +74,44 @@ func Load() *Config {
 		UpdateField:         getEnvWithDefault("UPDATE_FIELD", "label"),
 		RemoveMode:          os.Getenv("REMOVE"),
 		TMDbReadAccessToken: os.Getenv("TMDB_READ_ACCESS_TOKEN"),
-		ProcessTimer:        getProcessTimerFromEnv(),
-		
+		ProcessTimer:        getDurationEnvWithDefault("PROCESS_TIMER", "1h"),
+
 		// Radarr configuration
 		RadarrURL:    os.Getenv("RADARR_URL"),
 		RadarrAPIKey: os.Getenv("RADARR_API_KEY"),
 		UseRadarr:    getBoolEnvWithDefault("USE_RADARR", false),
-		
+
 		// Sonarr configuration
 		SonarrURL:    os.Getenv("SONARR_URL"),
 		SonarrAPIKey: os.Getenv("SONARR_API_KEY"),
 		UseSonarr:    getBoolEnvWithDefault("USE_SONARR", false),
-		
+
 		// Logging configuration
 		VerboseLogging: getBoolEnvWithDefault("VERBOSE_LOGGING", false),
-		
+
 		// Storage configuration
-		DataDir: getEnvWithDefault("DATA_DIR", "/data"),
-		
+		DataDir: os.Getenv("DATA_DIR"), // No default - ephemeral if not set
+
 		// Force update configuration
 		ForceUpdate: getBoolEnvWithDefault("FORCE_UPDATE", false),
+
+		// Webhook configuration
+		WebhookEnabled:  getBoolEnvWithDefault("WEBHOOK_ENABLED", false),
+		WebhookPort:     getIntEnvWithDefault("WEBHOOK_PORT", 9090),
+		WebhookDebounce: getDurationEnvWithDefault("WEBHOOK_DEBOUNCE", "30s"),
+
+		// Keyword prefix configuration
+		KeywordPrefix: os.Getenv("KEYWORD_PREFIX"),
+
+		// Batch processing configuration
+		BatchSize:  getIntEnvWithDefault("BATCH_SIZE", 100),
+		BatchDelay: getDurationEnvWithDefault("BATCH_DELAY", "10s"),
+		ItemDelay:  getDurationEnvWithDefault("ITEM_DELAY", "500ms"),
+
+		// Export configuration
+		ExportLabels:   parseExportLabels(os.Getenv("EXPORT_LABELS")),
+		ExportLocation: os.Getenv("EXPORT_LOCATION"),
+		ExportMode:     getEnvWithDefault("EXPORT_MODE", "txt"),
 	}
 
 	// Set protocol based on HTTPS requirement
@@ -122,7 +159,17 @@ func (c *Config) Validate() error {
 	if c.RemoveMode != "" && c.RemoveMode != "lock" && c.RemoveMode != "unlock" {
 		return fmt.Errorf("REMOVE must be 'lock' or 'unlock'")
 	}
-	
+	if c.ExportMode != "txt" && c.ExportMode != "json" {
+		return fmt.Errorf("EXPORT_MODE must be 'txt' or 'json'")
+	}
+
+	if c.WebhookEnabled && (c.WebhookPort < 1 || c.WebhookPort > 65535) {
+		return fmt.Errorf("WEBHOOK_PORT must be between 1 and 65535")
+	}
+	if c.BatchSize < 1 {
+		return fmt.Errorf("BATCH_SIZE must be at least 1")
+	}
+
 	// Validate Radarr configuration if enabled
 	if c.UseRadarr {
 		if c.RadarrURL == "" {
@@ -132,7 +179,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("RADARR_API_KEY environment variable is required when USE_RADARR is true")
 		}
 	}
-	
+
 	// Validate Sonarr configuration if enabled
 	if c.UseSonarr {
 		if c.SonarrURL == "" {
@@ -142,7 +189,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("SONARR_API_KEY environment variable is required when USE_SONARR is true")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -151,15 +198,6 @@ func getEnvWithDefault(envVar, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-func getProcessTimerFromEnv() time.Duration {
-	timerStr := getEnvWithDefault("PROCESS_TIMER", "1h")
-	timer, err := time.ParseDuration(timerStr)
-	if err != nil {
-		return 5 * time.Minute
-	}
-	return timer
 }
 
 func getBoolEnvWithDefault(envVar string, defaultValue bool) bool {
@@ -172,4 +210,47 @@ func getBoolEnvWithDefault(envVar string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return result
+}
+
+func getIntEnvWithDefault(envVar string, defaultValue int) int {
+	value := os.Getenv(envVar)
+	if value == "" {
+		return defaultValue
+	}
+	result, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
+func getDurationEnvWithDefault(envVar string, defaultValue string) time.Duration {
+	value := getEnvWithDefault(envVar, defaultValue)
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		fallback, _ := time.ParseDuration(defaultValue)
+		return fallback
+	}
+	return duration
+}
+
+func parseExportLabels(labels string) []string {
+	if labels == "" {
+		return nil
+	}
+	// Split and trim whitespace from each label
+	rawLabels := strings.Split(labels, ",")
+	var cleanLabels []string
+	for _, label := range rawLabels {
+		trimmed := strings.TrimSpace(label)
+		if trimmed != "" {
+			cleanLabels = append(cleanLabels, trimmed)
+		}
+	}
+	return cleanLabels
+}
+
+// HasExportEnabled returns true if export functionality is enabled
+func (c *Config) HasExportEnabled() bool {
+	return len(c.ExportLabels) > 0 && c.ExportLocation != ""
 }
