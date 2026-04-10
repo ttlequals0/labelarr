@@ -152,6 +152,10 @@
 - Updated keyword display to show normalization in verbose mode
 - Enhanced keyword synchronization with smart duplicate cleaning
 - Force update mode bypasses all previous processing checks
+- Added debug logging to show exact keywords being sent to Plex API
+- Enhanced duplicate cleaning with detailed count reporting
+- Optimized removal process speed: reduced delays from 500ms to 100ms per item
+- Added progress indicators for removal operations on large libraries
 
 ### Documentation
 

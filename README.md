@@ -152,7 +152,7 @@ services:
 - `PLEX_REQUIRES_HTTPS=true` - Use HTTPS (default: `true`)
 - `UPDATE_FIELD=label` - Field to update: `label` or `genre` (default: `label`)
 - `PROCESS_TIMER=1h` - How often to run 24h, 5m, 2h30m etc. (default: `1h`)
-- `REMOVE=lock` - Clean mode: `lock` or `unlock` (runs once and exits)
+- `REMOVE=lock/unlock` - Clean mode: `lock` or `unlock` (runs once and exits)
 - `VERBOSE_LOGGING=true` - Enable detailed lookup information (default: `false`)
 - `DATA_DIR=/data` - Directory for persistent storage (default: `/data`)
 - `FORCE_UPDATE=true` - Force reprocess all items regardless of previous processing (default: `false`)
