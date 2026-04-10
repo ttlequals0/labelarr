@@ -316,7 +316,14 @@ func (p *Processor) RemoveKeywordsFromItems(libraryID string, mediaType MediaTyp
 	skippedCount := 0
 	totalKeywordsRemoved := 0
 
-	for _, item := range items {
+	fmt.Printf("🚀 Optimized removal mode: reduced delays for faster processing\n")
+
+	for i, item := range items {
+		// Show progress for large libraries
+		if len(items) > 100 && (i+1)%50 == 0 {
+			fmt.Printf("📊 Removal Progress: %d/%d (%.1f%%)\n", i+1, len(items), float64(i+1)/float64(len(items))*100)
+		}
+
 		tmdbID := p.extractTMDbID(item, mediaType)
 		if tmdbID == "" {
 			skippedCount++
@@ -377,7 +384,8 @@ func (p *Processor) RemoveKeywordsFromItems(libraryID string, mediaType MediaTyp
 		removedCount++
 		fmt.Printf("✅ Successfully removed keywords from %s\n", item.GetTitle())
 
-		time.Sleep(500 * time.Millisecond)
+		// Reduced delay for faster removal (was 500ms)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	fmt.Printf("\n📊 Removal Summary:\n")
