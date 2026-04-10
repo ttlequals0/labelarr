@@ -141,7 +141,7 @@ func (c *Client) GetMovieDetails(ratingKey string) (*Movie, error) {
 // UpdateMediaField updates a media item's field (labels or genres) with new keywords
 func (c *Client) UpdateMediaField(mediaID, libraryID string, keywords []string, updateField string, mediaType string) error {
 	if c.config.VerboseLogging {
-		fmt.Printf("   🌐 Making Plex API call to update %s field with %d keywords\n", updateField, len(keywords))
+		fmt.Printf("   [API] Making Plex API call to update %s field with %d keywords\n", updateField, len(keywords))
 	}
 	return c.updateMediaField(mediaID, libraryID, keywords, updateField, c.getMediaTypeForLibraryType(mediaType))
 }
@@ -342,7 +342,7 @@ func (c *Client) updateMediaField(mediaID, libraryID string, keywords []string, 
 
 	if c.config.VerboseLogging {
 		duration := time.Since(startTime)
-		fmt.Printf("   ⏱️ Plex API call completed in %v\n", duration)
+		fmt.Printf("   [TIMING] Plex API call completed in %v\n", duration)
 	}
 
 	return nil
