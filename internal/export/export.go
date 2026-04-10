@@ -319,7 +319,7 @@ func (e *Exporter) writeSummary() error {
 	}
 
 	// Write export file list
-	fmt.Fprintf(file, "📁 Export Files Generated:\n")
+	fmt.Fprintf(file, "[STORAGE] Export Files Generated:\n")
 	for libraryName := range libraryStats {
 		for _, label := range e.exportLabels {
 			if stats, exists := libraryStats[libraryName][label]; exists && stats.Count > 0 {
@@ -330,13 +330,13 @@ func (e *Exporter) writeSummary() error {
 	fmt.Fprintf(file, "\n")
 
 	// Write totals
-	fmt.Fprintf(file, "📊 Overall Statistics:\n")
+	fmt.Fprintf(file, "[STATS] Overall Statistics:\n")
 	fmt.Fprintf(file, "  Total files: %d\n", totalFiles)
 	fmt.Fprintf(file, "  Total size: %s (%d bytes)\n", formatFileSize(totalSize), totalSize)
 	fmt.Fprintf(file, "\n")
 
 	// Write per-library breakdown
-	fmt.Fprintf(file, "📚 Library Breakdown:\n")
+	fmt.Fprintf(file, "[INFO] Library Breakdown:\n")
 	for libraryName, labelStats := range libraryStats {
 		fmt.Fprintf(file, "\n  %s:\n", libraryName)
 
@@ -363,7 +363,7 @@ func (e *Exporter) writeSummary() error {
 	}
 
 	// Write per-label totals across all libraries
-	fmt.Fprintf(file, "\n🏷️ Label Totals (All Libraries):\n")
+	fmt.Fprintf(file, "\n[LABEL] Label Totals (All Libraries):\n")
 	labelTotals := make(map[string]struct {
 		Count int
 		Size  int64

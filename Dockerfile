@@ -27,5 +27,7 @@ COPY --from=builder /app/labelarr .
 RUN adduser -D -s /bin/bash labelarr
 USER labelarr
 
-# Run the application
+# Webhook server port (only used when WEBHOOK_ENABLED=true)
+EXPOSE 9090
+
 CMD ["./labelarr"] 
