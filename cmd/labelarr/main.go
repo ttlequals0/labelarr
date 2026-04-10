@@ -222,7 +222,7 @@ func handleNormalMode(cfg *config.Config, processor *media.Processor, movieLibra
 	fmt.Printf("[INFO] Starting periodic processing interval: %v\n", cfg.ProcessTimer)
 
 	processFunc := func() {
-		processor.ClearKeywordCache()
+		processor.ClearCaches()
 
 		if len(movieLibraries) > 0 {
 			forEachLibrary(cfg.MovieProcessAll, cfg.MovieLibraryID, movieLibraries, "Movies", func(id, name string) {

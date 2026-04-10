@@ -163,12 +163,19 @@ func (p *Processor) pauseAfterBatch(b batch, label string) {
 	}
 }
 
-// ClearKeywordCache resets the TMDb keyword cache. Call at the start of each
-// processing cycle so keywords are refreshed from TMDb periodically.
-func (p *Processor) ClearKeywordCache() {
+// ClearCaches resets the TMDb keyword cache and Radarr/Sonarr library caches.
+// Call at the start of each processing cycle so data is refreshed periodically.
+func (p *Processor) ClearCaches() {
 	p.cacheMu.Lock()
 	p.keywordCache = make(map[string][]string)
 	p.cacheMu.Unlock()
+
+	if p.radarrClient != nil {
+		p.radarrClient.ClearCache()
+	}
+	if p.sonarrClient != nil {
+		p.sonarrClient.ClearCache()
+	}
 }
 
 func (p *Processor) applyKeywordPrefix(keywords []string) []string {
