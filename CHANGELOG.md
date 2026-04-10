@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-04-10
 
 ### Added
 
@@ -20,6 +20,10 @@
 - BATCH_SIZE (default 100) and BATCH_DELAY (default 10s) env vars
 - Prevents API flooding on large libraries (4000+ items)
 - ITEM_DELAY (default 500ms) controls per-item pacing
+
+#### Version Tracking
+- Version constant in internal/version/version.go
+- Logs version on startup
 
 ### Changed
 - Removed all emoji from log output; replaced with bracketed tags

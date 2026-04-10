@@ -14,10 +14,13 @@ import (
 	"github.com/nullable-eth/labelarr/internal/radarr"
 	"github.com/nullable-eth/labelarr/internal/sonarr"
 	"github.com/nullable-eth/labelarr/internal/tmdb"
+	"github.com/nullable-eth/labelarr/internal/version"
 	"github.com/nullable-eth/labelarr/internal/webhook"
 )
 
 func main() {
+	fmt.Printf("[INFO] Labelarr v%s\n", version.Version)
+
 	cfg := config.Load()
 
 	if err := cfg.Validate(); err != nil {
