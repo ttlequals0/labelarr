@@ -806,266 +806,182 @@ func (p *Processor) extractTMDbID(item MediaItem, mediaType MediaType) string {
 
 // extractMovieTMDbID extracts TMDb ID from movie metadata or file paths
 func (p *Processor) extractMovieTMDbID(item MediaItem) string {
-	if p.config.VerboseLogging {
-		fmt.Printf("\n[LOOKUP] Starting TMDb ID lookup for movie: %s (%d)\n", item.GetTitle(), item.GetYear())
-		fmt.Printf("   [INFO] Available Plex GUIDs:\n")
-		for _, guid := range item.GetGuid() {
-			fmt.Printf("      - %s\n", guid.ID)
-		}
+	verbose := p.config.VerboseLogging
+	if verbose {
+		fmt.Printf("\n[LOOKUP] Movie: %s (%d)\n", item.GetTitle(), item.GetYear())
 	}
 
-	// First, try to get TMDb ID from Plex metadata
+	// 1. Plex metadata
 	for _, guid := range item.GetGuid() {
 		if strings.Contains(guid.ID, "tmdb://") {
 			parts := strings.Split(guid.ID, "//")
 			if len(parts) > 1 {
 				tmdbID := strings.Split(parts[1], "?")[0]
-				if p.config.VerboseLogging {
-					fmt.Printf("   [OK] Found TMDb ID in Plex metadata: %s\n", tmdbID)
+				if verbose {
+					fmt.Printf("   [OK] Plex metadata: %s\n", tmdbID)
 				}
 				return tmdbID
 			}
 		}
 	}
 
-	// If Radarr is enabled, try to match via Radarr
+	// 2. Radarr lookup (title/year, then IMDb ID)
 	if p.config.UseRadarr && p.radarrClient != nil {
-		if p.config.VerboseLogging {
-			fmt.Printf("   [MOVIE] Checking Radarr for movie match...\n")
-		}
-
-		// Try to match by title and year first
-		if p.config.VerboseLogging {
-			fmt.Printf("      -> Searching by title: \"%s\" year: %d\n", item.GetTitle(), item.GetYear())
-		}
 		movie, err := p.radarrClient.FindMovieMatch(item.GetTitle(), item.GetYear())
 		if err == nil && movie != nil {
 			tmdbID := p.radarrClient.GetTMDbIDFromMovie(movie)
-			if p.config.VerboseLogging {
-				fmt.Printf("      [OK] Found match in Radarr: %s (TMDb: %s)\n", movie.Title, tmdbID)
+			if verbose {
+				fmt.Printf("   [OK] Radarr match: %s (TMDb: %s)\n", movie.Title, tmdbID)
 			}
 			return tmdbID
-		} else if p.config.VerboseLogging {
-			fmt.Printf("      [ERROR] No match found by title/year\n")
+		} else if verbose {
+			fmt.Printf("   [SKIP] No Radarr match by title/year\n")
 		}
 
-		// Try to match by file path
-		if p.config.VerboseLogging {
-			fmt.Printf("      -> Searching by file path...\n")
-		}
-		for _, mediaItem := range item.GetMedia() {
-			for _, part := range mediaItem.Part {
-				if p.config.VerboseLogging {
-					fmt.Printf("         - Checking: %s\n", part.File)
-				}
-				movie, err := p.radarrClient.GetMovieByPath(part.File)
-				if err == nil && movie != nil {
-					tmdbID := p.radarrClient.GetTMDbIDFromMovie(movie)
-					if p.config.VerboseLogging {
-						fmt.Printf("      [OK] Found match by file path: %s (TMDb: %s)\n", movie.Title, tmdbID)
-					}
-					return tmdbID
-				}
-			}
-		}
-		if p.config.VerboseLogging {
-			fmt.Printf("      [ERROR] No match found by file path\n")
-		}
-
-		// Try to match by IMDb ID if available
 		for _, guid := range item.GetGuid() {
 			if strings.Contains(guid.ID, "imdb://") {
 				imdbID := strings.TrimPrefix(guid.ID, "imdb://")
-				if p.config.VerboseLogging {
-					fmt.Printf("      -> Searching by IMDb ID: %s\n", imdbID)
-				}
 				movie, err := p.radarrClient.GetMovieByIMDbID(imdbID)
 				if err == nil && movie != nil {
 					tmdbID := p.radarrClient.GetTMDbIDFromMovie(movie)
-					if p.config.VerboseLogging {
-						fmt.Printf("      [OK] Found match by IMDb ID: %s (TMDb: %s)\n", movie.Title, tmdbID)
+					if verbose {
+						fmt.Printf("   [OK] Radarr match by IMDb %s: %s (TMDb: %s)\n", imdbID, movie.Title, tmdbID)
 					}
 					return tmdbID
-				} else if p.config.VerboseLogging {
-					fmt.Printf("      [ERROR] No match found by IMDb ID\n")
+				} else if verbose {
+					fmt.Printf("   [SKIP] No Radarr match by IMDb ID %s\n", imdbID)
 				}
 			}
 		}
 	}
 
-	// If not found in Radarr or Radarr not enabled, try to extract from file paths
-	if p.config.VerboseLogging {
-		fmt.Printf("   [STORAGE] Checking file paths for TMDb ID pattern...\n")
-	}
+	// 3. File paths: check Radarr path match AND TMDb ID regex in one pass
+	logged := 0
 	for _, mediaItem := range item.GetMedia() {
 		for _, part := range mediaItem.Part {
-			if p.config.VerboseLogging {
-				fmt.Printf("      - Checking: %s\n", part.File)
+			if verbose && logged < 3 {
+				fmt.Printf("   [INFO] Checking path: %s\n", part.File)
+				logged++
+			}
+			if p.config.UseRadarr && p.radarrClient != nil {
+				movie, err := p.radarrClient.GetMovieByPath(part.File)
+				if err == nil && movie != nil {
+					tmdbID := p.radarrClient.GetTMDbIDFromMovie(movie)
+					if verbose {
+						fmt.Printf("   [OK] Radarr path match: %s (TMDb: %s)\n", movie.Title, tmdbID)
+					}
+					return tmdbID
+				}
 			}
 			if tmdbID := ExtractTMDbIDFromPath(part.File); tmdbID != "" {
-				if p.config.VerboseLogging {
-					fmt.Printf("      [OK] Found TMDb ID in file path: %s\n", tmdbID)
+				if verbose {
+					fmt.Printf("   [OK] TMDb ID in file path: %s\n", tmdbID)
 				}
 				return tmdbID
 			}
 		}
 	}
 
-	if p.config.VerboseLogging {
-		fmt.Printf("   [ERROR] No TMDb ID found for movie: %s\n", item.GetTitle())
+	if verbose {
+		fmt.Printf("   [SKIP] No TMDb ID found for: %s\n", item.GetTitle())
 	}
-
 	return ""
 }
 
 // extractTVShowTMDbID extracts TMDb ID from TV show metadata or episode file paths
 func (p *Processor) extractTVShowTMDbID(item MediaItem) string {
-	if p.config.VerboseLogging {
-		fmt.Printf("\n[LOOKUP] Starting TMDb ID lookup for TV show: %s (%d)\n", item.GetTitle(), item.GetYear())
-		fmt.Printf("   [INFO] Available Plex GUIDs:\n")
-		for _, guid := range item.GetGuid() {
-			fmt.Printf("      - %s\n", guid.ID)
-		}
+	verbose := p.config.VerboseLogging
+	if verbose {
+		fmt.Printf("\n[LOOKUP] TV show: %s (%d)\n", item.GetTitle(), item.GetYear())
 	}
 
-	// First check if we have TMDb GUID in the TV show metadata
+	// 1. Plex metadata
 	for _, guid := range item.GetGuid() {
 		if strings.HasPrefix(guid.ID, "tmdb://") {
 			tmdbID := strings.TrimPrefix(guid.ID, "tmdb://")
-			if p.config.VerboseLogging {
-				fmt.Printf("   [OK] Found TMDb ID in Plex metadata: %s\n", tmdbID)
+			if verbose {
+				fmt.Printf("   [OK] Plex metadata: %s\n", tmdbID)
 			}
 			return tmdbID
 		}
 	}
 
-	// If Sonarr is enabled, try to match via Sonarr
+	// 2. Sonarr lookup (title/year, TVDb ID, IMDb ID)
 	if p.config.UseSonarr && p.sonarrClient != nil {
-		if p.config.VerboseLogging {
-			fmt.Printf("   [TV] Checking Sonarr for series match...\n")
-		}
-
-		// Try to match by title and year first
-		if p.config.VerboseLogging {
-			fmt.Printf("      -> Searching by title: \"%s\" year: %d\n", item.GetTitle(), item.GetYear())
-		}
 		series, err := p.sonarrClient.FindSeriesMatch(item.GetTitle(), item.GetYear())
 		if err == nil && series != nil {
 			tmdbID := p.sonarrClient.GetTMDbIDFromSeries(series)
-			if p.config.VerboseLogging {
-				fmt.Printf("      [OK] Found match in Sonarr: %s (TMDb: %s)\n", series.Title, tmdbID)
+			if verbose {
+				fmt.Printf("   [OK] Sonarr match: %s (TMDb: %s)\n", series.Title, tmdbID)
 			}
 			return tmdbID
-		} else if p.config.VerboseLogging {
-			fmt.Printf("      [ERROR] No match found by title/year\n")
+		} else if verbose {
+			fmt.Printf("   [SKIP] No Sonarr match by title/year\n")
 		}
 
-		// Try to match by TVDb ID if available
 		for _, guid := range item.GetGuid() {
 			if strings.Contains(guid.ID, "tvdb://") {
 				tvdbIDStr := strings.TrimPrefix(guid.ID, "tvdb://")
-				// Parse TVDb ID to int
 				var tvdbID int
 				if _, err := fmt.Sscanf(tvdbIDStr, "%d", &tvdbID); err == nil {
-					if p.config.VerboseLogging {
-						fmt.Printf("      -> Searching by TVDb ID: %d\n", tvdbID)
-					}
 					series, err := p.sonarrClient.GetSeriesByTVDbID(tvdbID)
 					if err == nil && series != nil {
 						tmdbID := p.sonarrClient.GetTMDbIDFromSeries(series)
-						if p.config.VerboseLogging {
-							fmt.Printf("      [OK] Found match by TVDb ID: %s (TMDb: %s)\n", series.Title, tmdbID)
+						if verbose {
+							fmt.Printf("   [OK] Sonarr match by TVDb %d: %s (TMDb: %s)\n", tvdbID, series.Title, tmdbID)
 						}
 						return tmdbID
-					} else if p.config.VerboseLogging {
-						fmt.Printf("      [ERROR] No match found by TVDb ID\n")
+					} else if verbose {
+						fmt.Printf("   [SKIP] No Sonarr match by TVDb ID %d\n", tvdbID)
 					}
 				}
 			}
-		}
-
-		// Try to match by IMDb ID if available
-		for _, guid := range item.GetGuid() {
 			if strings.Contains(guid.ID, "imdb://") {
 				imdbID := strings.TrimPrefix(guid.ID, "imdb://")
-				if p.config.VerboseLogging {
-					fmt.Printf("      -> Searching by IMDb ID: %s\n", imdbID)
-				}
 				series, err := p.sonarrClient.GetSeriesByIMDbID(imdbID)
 				if err == nil && series != nil {
 					tmdbID := p.sonarrClient.GetTMDbIDFromSeries(series)
-					if p.config.VerboseLogging {
-						fmt.Printf("      [OK] Found match by IMDb ID: %s (TMDb: %s)\n", series.Title, tmdbID)
+					if verbose {
+						fmt.Printf("   [OK] Sonarr match by IMDb %s: %s (TMDb: %s)\n", imdbID, series.Title, tmdbID)
 					}
 					return tmdbID
-				} else if p.config.VerboseLogging {
-					fmt.Printf("      [ERROR] No match found by IMDb ID\n")
+				} else if verbose {
+					fmt.Printf("   [SKIP] No Sonarr match by IMDb ID %s\n", imdbID)
 				}
 			}
 		}
-
-		// Try to match by file path from episodes
-		if p.config.VerboseLogging {
-			fmt.Printf("      -> Searching by episode file paths...\n")
-		}
-		episodes, err := p.plexClient.GetTVShowEpisodes(item.GetRatingKey())
-		if err == nil {
-			episodeCount := 0
-			for _, episode := range episodes {
-				for _, mediaItem := range episode.Media {
-					for _, part := range mediaItem.Part {
-						episodeCount++
-						if episodeCount <= 5 && p.config.VerboseLogging {
-							fmt.Printf("         - Checking: %s\n", part.File)
-						}
-						series, err := p.sonarrClient.GetSeriesByPath(part.File)
-						if err == nil && series != nil {
-							tmdbID := p.sonarrClient.GetTMDbIDFromSeries(series)
-							if p.config.VerboseLogging {
-								fmt.Printf("      [OK] Found match by file path: %s (TMDb: %s)\n", series.Title, tmdbID)
-							}
-							return tmdbID
-						}
-					}
-				}
-			}
-			if episodeCount > 5 && p.config.VerboseLogging {
-				fmt.Printf("         ... and %d more episodes\n", episodeCount-5)
-			}
-			if p.config.VerboseLogging {
-				fmt.Printf("      [ERROR] No match found by file path\n")
-			}
-		} else if p.config.VerboseLogging {
-			fmt.Printf("      [WARN] Could not fetch episodes: %v\n", err)
-		}
 	}
 
-	// If no TMDb GUID found and Sonarr not enabled, get episodes and check their file paths
-	if p.config.VerboseLogging {
-		fmt.Printf("   [STORAGE] Checking episode file paths for TMDb ID pattern...\n")
-	}
+	// 3. Episode file paths: check Sonarr path match AND TMDb ID regex in one pass
 	episodes, err := p.plexClient.GetTVShowEpisodes(item.GetRatingKey())
 	if err != nil {
-		if p.config.VerboseLogging {
-			fmt.Printf("   [WARN] Error fetching episodes: %v\n", err)
-		} else {
-			fmt.Printf("[WARN] Error fetching episodes for %s: %v\n", item.GetTitle(), err)
+		if verbose {
+			fmt.Printf("   [WARN] Could not fetch episodes: %v\n", err)
 		}
 		return ""
 	}
 
-	// Check file paths in episodes for TMDb ID - stop at first match
-	episodeCount := 0
+	logged := 0
 	for _, episode := range episodes {
 		for _, mediaItem := range episode.Media {
 			for _, part := range mediaItem.Part {
-				episodeCount++
-				if episodeCount <= 5 && p.config.VerboseLogging {
-					fmt.Printf("      - Checking: %s\n", part.File)
+				if verbose && logged < 3 {
+					fmt.Printf("   [INFO] Checking path: %s\n", part.File)
+					logged++
+				}
+				if p.config.UseSonarr && p.sonarrClient != nil {
+					series, err := p.sonarrClient.GetSeriesByPath(part.File)
+					if err == nil && series != nil {
+						tmdbID := p.sonarrClient.GetTMDbIDFromSeries(series)
+						if verbose {
+							fmt.Printf("   [OK] Sonarr path match: %s (TMDb: %s)\n", series.Title, tmdbID)
+						}
+						return tmdbID
+					}
 				}
 				if tmdbID := ExtractTMDbIDFromPath(part.File); tmdbID != "" {
-					if p.config.VerboseLogging {
-						fmt.Printf("      [OK] Found TMDb ID in file path: %s\n", tmdbID)
+					if verbose {
+						fmt.Printf("   [OK] TMDb ID in file path: %s\n", tmdbID)
 					}
 					return tmdbID
 				}
@@ -1073,14 +989,21 @@ func (p *Processor) extractTVShowTMDbID(item MediaItem) string {
 		}
 	}
 
-	if episodeCount > 5 && p.config.VerboseLogging {
-		fmt.Printf("      ... and %d more episodes\n", episodeCount-5)
+	if verbose && logged > 0 {
+		totalPaths := 0
+		for _, ep := range episodes {
+			for _, m := range ep.Media {
+				totalPaths += len(m.Part)
+			}
+		}
+		if totalPaths > 3 {
+			fmt.Printf("   [INFO] ... and %d more paths checked\n", totalPaths-3)
+		}
 	}
 
-	if p.config.VerboseLogging {
-		fmt.Printf("   [ERROR] No TMDb ID found for TV show: %s\n", item.GetTitle())
+	if verbose {
+		fmt.Printf("   [SKIP] No TMDb ID found for: %s\n", item.GetTitle())
 	}
-
 	return ""
 }
 
