@@ -20,15 +20,37 @@ const (
 	eventLibraryOnDeck = "library.on.deck"
 )
 
+// PlexWebhookPayload matches the Plex webhook JSON structure.
+// Plex sends this as the "payload" field in a multipart/form-data POST.
+// Requires Plex Pass on the server.
 type PlexWebhookPayload struct {
 	Event   string `json:"event"`
+	User    bool   `json:"user"`
+	Owner   bool   `json:"owner"`
 	Account struct {
+		ID    int    `json:"id"`
 		Title string `json:"title"`
 	} `json:"Account"`
+	Server struct {
+		Title string `json:"title"`
+		UUID  string `json:"uuid"`
+	} `json:"Server"`
+	Player struct {
+		Local bool   `json:"local"`
+		Title string `json:"title"`
+		UUID  string `json:"uuid"`
+	} `json:"Player"`
 	Metadata struct {
+		LibrarySectionType  string `json:"librarySectionType"`
 		LibrarySectionID    int    `json:"librarySectionID"`
 		LibrarySectionTitle string `json:"librarySectionTitle"`
+		RatingKey           string `json:"ratingKey"`
+		Key                 string `json:"key"`
+		GUID                string `json:"guid"`
 		Type                string `json:"type"`
+		Title               string `json:"title"`
+		Year                int    `json:"year"`
+		AddedAt             int64  `json:"addedAt"`
 	} `json:"Metadata"`
 }
 
@@ -111,6 +133,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Plex sends multipart/form-data with a "payload" JSON field
+	// and optionally a thumbnail image
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -129,13 +153,17 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.config.VerboseLogging {
-		fmt.Printf("Webhook received: event=%s library=%s type=%s\n",
-			payload.Event, payload.Metadata.LibrarySectionTitle, payload.Metadata.Type)
+		fmt.Printf("Webhook received: event=%s library=%s section_type=%s media_type=%s title=%s\n",
+			payload.Event,
+			payload.Metadata.LibrarySectionTitle,
+			payload.Metadata.LibrarySectionType,
+			payload.Metadata.Type,
+			payload.Metadata.Title)
 	}
 
 	switch payload.Event {
 	case eventLibraryNew, eventLibraryOnDeck:
-		// proceed
+		// These are the events fired when new media is added
 	default:
 		w.WriteHeader(http.StatusOK)
 		return
@@ -143,11 +171,40 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	libraryID := strconv.Itoa(payload.Metadata.LibrarySectionID)
 
-	if info, ok := s.libraryMap[libraryID]; ok {
-		s.scheduleProcessing(libraryID, info.name, info.mediaType)
+	// Use LibrarySectionType to determine media type, falling back to library map.
+	// Plex Metadata.Type is "movie", "episode", "track" etc. but
+	// LibrarySectionType is "movie" or "show" which maps to our processing paths.
+	mediaType := s.resolveMediaType(libraryID, payload.Metadata.LibrarySectionType)
+	libraryName := payload.Metadata.LibrarySectionTitle
+	if libraryName == "" {
+		if info, ok := s.libraryMap[libraryID]; ok {
+			libraryName = info.name
+		}
+	}
+
+	if mediaType != media.MediaTypeUnknown {
+		s.scheduleProcessing(libraryID, libraryName, mediaType)
+	} else if s.config.VerboseLogging {
+		fmt.Printf("Webhook: ignoring event for unknown library %s (ID: %s)\n", libraryName, libraryID)
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// resolveMediaType determines the MediaType from the Plex LibrarySectionType field,
+// falling back to the pre-built library map if the section type is not recognized.
+func (s *Server) resolveMediaType(libraryID, sectionType string) media.MediaType {
+	switch sectionType {
+	case "movie":
+		return media.MediaTypeMovie
+	case "show":
+		return media.MediaTypeTV
+	}
+	// Fall back to library map (built from Plex library list at startup)
+	if info, ok := s.libraryMap[libraryID]; ok {
+		return info.mediaType
+	}
+	return media.MediaTypeUnknown
 }
 
 func (s *Server) scheduleProcessing(libraryID, libraryName string, mediaType media.MediaType) {
@@ -160,7 +217,7 @@ func (s *Server) scheduleProcessing(libraryID, libraryName string, mediaType med
 	s.debounceGen[libraryID]++
 	gen := s.debounceGen[libraryID]
 
-	// Stop old timer if it exists (ignore return value -- generation counter handles races)
+	// Stop old timer if it exists (generation counter handles races)
 	if timer, exists := s.debounceTimers[libraryID]; exists {
 		timer.Stop()
 		if s.config.VerboseLogging {
@@ -172,7 +229,6 @@ func (s *Server) scheduleProcessing(libraryID, libraryName string, mediaType med
 
 	s.debounceTimers[libraryID] = time.AfterFunc(debounce, func() {
 		s.debounceMu.Lock()
-		// Only proceed if this callback's generation is still current
 		if s.debounceGen[libraryID] != gen {
 			s.debounceMu.Unlock()
 			return

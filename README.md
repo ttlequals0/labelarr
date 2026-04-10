@@ -153,7 +153,7 @@ API keys: Radarr/Sonarr Settings > General > Security > API Key.
 
 ## Webhook Support
 
-Instead of waiting for the next timer tick, Labelarr can react to Plex webhook events immediately.
+**Requires Plex Pass.** Instead of waiting for the next timer tick, Labelarr can react to Plex webhook events immediately.
 
 ```yaml
 environment:
