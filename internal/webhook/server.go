@@ -15,10 +15,7 @@ import (
 	"github.com/nullable-eth/labelarr/internal/plex"
 )
 
-const (
-	eventLibraryNew    = "library.new"
-	eventLibraryOnDeck = "library.on.deck"
-)
+const eventLibraryNew = "library.new"
 
 // PlexWebhookPayload matches the Plex webhook JSON structure.
 // Plex sends this as the "payload" field in a multipart/form-data POST.
@@ -59,14 +56,22 @@ type libraryInfo struct {
 	mediaType media.MediaType
 }
 
+// pendingWork tracks accumulated rating keys during a debounce window.
+type pendingWork struct {
+	libraryName string
+	mediaType   media.MediaType
+	ratingKeys  []string
+	timer       *time.Timer
+	gen         uint64
+}
+
 type Server struct {
-	config         *config.Config
-	processor      *media.Processor
-	httpServer     *http.Server
-	libraryMap     map[string]libraryInfo
-	debounceTimers map[string]*time.Timer
-	debounceGen    map[string]uint64
-	debounceMu     sync.Mutex
+	config     *config.Config
+	processor  *media.Processor
+	httpServer *http.Server
+	libraryMap map[string]libraryInfo
+	pending    map[string]*pendingWork
+	pendingMu  sync.Mutex
 }
 
 func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []plex.Library) *Server {
@@ -79,16 +84,13 @@ func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []pl
 	}
 
 	return &Server{
-		config:         cfg,
-		processor:      proc,
-		libraryMap:     libMap,
-		debounceTimers: make(map[string]*time.Timer),
-		debounceGen:    make(map[string]uint64),
+		config:     cfg,
+		processor:  proc,
+		libraryMap: libMap,
+		pending:    make(map[string]*pendingWork),
 	}
 }
 
-// Start binds the webhook port and begins serving. Returns an error if the port
-// cannot be bound, so the caller knows immediately if startup failed.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", s.handleWebhook)
@@ -119,7 +121,6 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the webhook server.
 func (s *Server) Stop(ctx context.Context) error {
 	if s.httpServer != nil {
 		return s.httpServer.Shutdown(ctx)
@@ -133,8 +134,6 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Plex sends multipart/form-data with a "payload" JSON field
-	// and optionally a thumbnail image
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -161,19 +160,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			payload.Metadata.Title)
 	}
 
-	switch payload.Event {
-	case eventLibraryNew, eventLibraryOnDeck:
-		// These are the events fired when new media is added
-	default:
+	if payload.Event != eventLibraryNew {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	libraryID := strconv.Itoa(payload.Metadata.LibrarySectionID)
-
-	// Use LibrarySectionType to determine media type, falling back to library map.
-	// Plex Metadata.Type is "movie", "episode", "track" etc. but
-	// LibrarySectionType is "movie" or "show" which maps to our processing paths.
 	mediaType := s.resolveMediaType(libraryID, payload.Metadata.LibrarySectionType)
 	libraryName := payload.Metadata.LibrarySectionTitle
 	if libraryName == "" {
@@ -183,7 +175,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if mediaType != media.MediaTypeUnknown {
-		s.scheduleProcessing(libraryID, libraryName, mediaType)
+		s.addPendingItem(libraryID, libraryName, mediaType, payload.Metadata.RatingKey)
 	} else if s.config.VerboseLogging {
 		fmt.Printf("Webhook: ignoring event for unknown library %s (ID: %s)\n", libraryName, libraryID)
 	}
@@ -191,8 +183,6 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// resolveMediaType determines the MediaType from the Plex LibrarySectionType field,
-// falling back to the pre-built library map if the section type is not recognized.
 func (s *Server) resolveMediaType(libraryID, sectionType string) media.MediaType {
 	switch sectionType {
 	case "movie":
@@ -200,52 +190,86 @@ func (s *Server) resolveMediaType(libraryID, sectionType string) media.MediaType
 	case "show":
 		return media.MediaTypeTV
 	}
-	// Fall back to library map (built from Plex library list at startup)
 	if info, ok := s.libraryMap[libraryID]; ok {
 		return info.mediaType
 	}
 	return media.MediaTypeUnknown
 }
 
-func (s *Server) scheduleProcessing(libraryID, libraryName string, mediaType media.MediaType) {
+// addPendingItem accumulates rating keys during the debounce window. Each new
+// event for the same library resets the timer and adds the rating key to the list.
+// When the timer fires, all accumulated keys are processed.
+func (s *Server) addPendingItem(libraryID, libraryName string, mediaType media.MediaType, ratingKey string) {
 	debounce := s.config.WebhookDebounce
 
-	s.debounceMu.Lock()
-	defer s.debounceMu.Unlock()
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
 
-	// Bump generation so any in-flight old callback becomes a no-op
-	s.debounceGen[libraryID]++
-	gen := s.debounceGen[libraryID]
-
-	// Stop old timer if it exists (generation counter handles races)
-	if timer, exists := s.debounceTimers[libraryID]; exists {
-		timer.Stop()
+	pw, exists := s.pending[libraryID]
+	if exists {
+		pw.timer.Stop()
+		pw.gen++
+		if ratingKey != "" {
+			pw.ratingKeys = appendUnique(pw.ratingKeys, ratingKey)
+		}
 		if s.config.VerboseLogging {
-			fmt.Printf("Webhook: reset debounce timer for library %s\n", libraryName)
+			fmt.Printf("Webhook: reset debounce for library %s (%d items queued)\n", libraryName, len(pw.ratingKeys))
 		}
 	} else {
+		var keys []string
+		if ratingKey != "" {
+			keys = []string{ratingKey}
+		}
+		pw = &pendingWork{
+			libraryName: libraryName,
+			mediaType:   mediaType,
+			ratingKeys:  keys,
+		}
+		s.pending[libraryID] = pw
 		fmt.Printf("Webhook: scheduled processing for library %s in %v\n", libraryName, debounce)
 	}
 
-	s.debounceTimers[libraryID] = time.AfterFunc(debounce, func() {
-		s.debounceMu.Lock()
-		if s.debounceGen[libraryID] != gen {
-			s.debounceMu.Unlock()
+	gen := pw.gen
+	pw.timer = time.AfterFunc(debounce, func() {
+		s.pendingMu.Lock()
+		current, ok := s.pending[libraryID]
+		if !ok || current.gen != gen {
+			s.pendingMu.Unlock()
 			return
 		}
-		delete(s.debounceTimers, libraryID)
-		delete(s.debounceGen, libraryID)
-		s.debounceMu.Unlock()
+		keys := current.ratingKeys
+		delete(s.pending, libraryID)
+		s.pendingMu.Unlock()
 
-		s.processLibrary(libraryID, libraryName, mediaType)
+		s.processItems(libraryID, libraryName, mediaType, keys)
 	})
 }
 
-func (s *Server) processLibrary(libraryID, libraryName string, mediaType media.MediaType) {
-	fmt.Printf("Webhook: processing library %s (ID: %s)\n", libraryName, libraryID)
-	if err := s.processor.ProcessAllItems(libraryID, libraryName, mediaType); err != nil {
-		fmt.Printf("Webhook: error processing library %s: %v\n", libraryName, err)
-	} else {
-		fmt.Printf("Webhook: finished processing library %s\n", libraryName)
+func appendUnique(slice []string, val string) []string {
+	for _, v := range slice {
+		if v == val {
+			return slice
+		}
 	}
+	return append(slice, val)
+}
+
+func (s *Server) processItems(libraryID, libraryName string, mediaType media.MediaType, ratingKeys []string) {
+	if len(ratingKeys) == 0 {
+		fmt.Printf("Webhook: processing full library %s (no rating keys in events)\n", libraryName)
+		if err := s.processor.ProcessAllItems(libraryID, libraryName, mediaType); err != nil {
+			fmt.Printf("Webhook: error processing library %s: %v\n", libraryName, err)
+		} else {
+			fmt.Printf("Webhook: finished processing library %s\n", libraryName)
+		}
+		return
+	}
+
+	fmt.Printf("Webhook: processing %d items in library %s\n", len(ratingKeys), libraryName)
+	for _, key := range ratingKeys {
+		if err := s.processor.ProcessSingleItem(key, libraryID, mediaType); err != nil {
+			fmt.Printf("Webhook: error processing item %s: %v\n", key, err)
+		}
+	}
+	fmt.Printf("Webhook: finished processing %d items in library %s\n", len(ratingKeys), libraryName)
 }
