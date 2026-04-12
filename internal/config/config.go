@@ -16,8 +16,11 @@ type Config struct {
 	PlexToken           string
 	MovieLibraryID      string
 	MovieProcessAll     bool
+	MovieLibraryExclude []string
 	TVLibraryID         string
 	TVProcessAll        bool
+	TVLibraryExclude    []string
+	WebhookOnly         bool
 	UpdateField         string
 	RemoveMode          string
 	TMDbReadAccessToken string
@@ -69,8 +72,11 @@ func Load() *Config {
 		PlexToken:           os.Getenv("PLEX_TOKEN"),
 		MovieLibraryID:      os.Getenv("MOVIE_LIBRARY_ID"),
 		MovieProcessAll:     getBoolEnvWithDefault("MOVIE_PROCESS_ALL", false),
+		MovieLibraryExclude: parseCSV(os.Getenv("MOVIE_LIBRARY_EXCLUDE")),
 		TVLibraryID:         os.Getenv("TV_LIBRARY_ID"),
 		TVProcessAll:        getBoolEnvWithDefault("TV_PROCESS_ALL", false),
+		TVLibraryExclude:    parseCSV(os.Getenv("TV_LIBRARY_EXCLUDE")),
+		WebhookOnly:         getBoolEnvWithDefault("WEBHOOK_ONLY", false),
 		UpdateField:         getEnvWithDefault("UPDATE_FIELD", "label"),
 		RemoveMode:          os.Getenv("REMOVE"),
 		TMDbReadAccessToken: os.Getenv("TMDB_READ_ACCESS_TOKEN"),
@@ -109,7 +115,7 @@ func Load() *Config {
 		ItemDelay:  getDurationEnvWithDefault("ITEM_DELAY", "500ms"),
 
 		// Export configuration
-		ExportLabels:   parseExportLabels(os.Getenv("EXPORT_LABELS")),
+		ExportLabels:   parseCSV(os.Getenv("EXPORT_LABELS")),
 		ExportLocation: os.Getenv("EXPORT_LOCATION"),
 		ExportMode:     getEnvWithDefault("EXPORT_MODE", "txt"),
 	}
@@ -161,6 +167,9 @@ func (c *Config) Validate() error {
 	}
 	if c.ExportMode != "txt" && c.ExportMode != "json" {
 		return fmt.Errorf("EXPORT_MODE must be 'txt' or 'json'")
+	}
+	if c.WebhookOnly && !c.WebhookEnabled {
+		return fmt.Errorf("WEBHOOK_ONLY=true requires WEBHOOK_ENABLED=true")
 	}
 
 	if c.WebhookEnabled && (c.WebhookPort < 1 || c.WebhookPort > 65535) {
@@ -234,20 +243,19 @@ func getDurationEnvWithDefault(envVar string, defaultValue string) time.Duration
 	return duration
 }
 
-func parseExportLabels(labels string) []string {
-	if labels == "" {
+func parseCSV(s string) []string {
+	if s == "" {
 		return nil
 	}
-	// Split and trim whitespace from each label
-	rawLabels := strings.Split(labels, ",")
-	var cleanLabels []string
-	for _, label := range rawLabels {
-		trimmed := strings.TrimSpace(label)
+	parts := strings.Split(s, ",")
+	var out []string
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
 		if trimmed != "" {
-			cleanLabels = append(cleanLabels, trimmed)
+			out = append(out, trimmed)
 		}
 	}
-	return cleanLabels
+	return out
 }
 
 // HasExportEnabled returns true if export functionality is enabled

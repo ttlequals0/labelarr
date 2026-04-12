@@ -195,14 +195,29 @@ func (p *Processor) applyKeywordPrefix(keywords []string) []string {
 // ProcessSingleItem processes a single item by rating key. Used by webhooks to
 // tag only the newly added item instead of scanning the entire library.
 func (p *Processor) ProcessSingleItem(ratingKey, libraryID string, mediaType MediaType) error {
-	p.processingMu.Lock()
-	if p.processing[libraryID] {
+	const (
+		pollInterval = 5 * time.Second
+		maxWait      = 2 * time.Hour
+	)
+	deadline := time.Now().Add(maxWait)
+	logged := false
+	for {
+		p.processingMu.Lock()
+		if !p.processing[libraryID] {
+			p.processing[libraryID] = true
+			p.processingMu.Unlock()
+			break
+		}
 		p.processingMu.Unlock()
-		fmt.Printf("[INFO] Library %s is already being processed, queuing item %s for next cycle\n", libraryID, ratingKey)
-		return nil
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for library %s to free up for item %s", maxWait, libraryID, ratingKey)
+		}
+		if !logged {
+			fmt.Printf("[INFO] Library %s busy (scan in progress); webhook item %s will wait until it frees\n", libraryID, ratingKey)
+			logged = true
+		}
+		time.Sleep(pollInterval)
 	}
-	p.processing[libraryID] = true
-	p.processingMu.Unlock()
 	defer func() {
 		p.processingMu.Lock()
 		delete(p.processing, libraryID)
@@ -307,6 +322,9 @@ func (p *Processor) ProcessSingleItem(ratingKey, libraryID string, mediaType Med
 }
 
 func (p *Processor) ProcessAllItems(libraryID string, libraryName string, mediaType MediaType) error {
+	// Unlike ProcessSingleItem, this path skips when the library is busy:
+	// the timer will re-fire on the next cycle, so waiting here would only
+	// stack redundant full scans behind each other.
 	p.processingMu.Lock()
 	if p.processing[libraryID] {
 		p.processingMu.Unlock()

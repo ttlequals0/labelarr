@@ -14,6 +14,7 @@ import (
 	"github.com/nullable-eth/labelarr/internal/radarr"
 	"github.com/nullable-eth/labelarr/internal/sonarr"
 	"github.com/nullable-eth/labelarr/internal/tmdb"
+	"github.com/nullable-eth/labelarr/internal/utils"
 	"github.com/nullable-eth/labelarr/internal/version"
 	"github.com/nullable-eth/labelarr/internal/webhook"
 )
@@ -99,8 +100,7 @@ func getLibraries(cfg *config.Config, plexClient *plex.Client) ([]plex.Library, 
 		fmt.Printf("  ID: %s - %s (%s)\n", lib.Key, lib.Title, lib.Type)
 	}
 
-	var movieLibraries []plex.Library
-	var tvLibraries []plex.Library
+	var movieLibraries, tvLibraries []plex.Library
 	for _, lib := range libraries {
 		switch lib.Type {
 		case "movie":
@@ -109,6 +109,8 @@ func getLibraries(cfg *config.Config, plexClient *plex.Client) ([]plex.Library, 
 			tvLibraries = append(tvLibraries, lib)
 		}
 	}
+	movieLibraries = filterExcluded(movieLibraries, utils.StringSet(cfg.MovieLibraryExclude), "movie")
+	tvLibraries = filterExcluded(tvLibraries, utils.StringSet(cfg.TVLibraryExclude), "TV")
 
 	if len(movieLibraries) == 0 && !cfg.ProcessTVShows() {
 		fmt.Println("[ERROR] No movie library found!")
@@ -121,6 +123,21 @@ func getLibraries(cfg *config.Config, plexClient *plex.Client) ([]plex.Library, 
 	}
 
 	return movieLibraries, tvLibraries
+}
+
+func filterExcluded(libs []plex.Library, exclude map[string]bool, kind string) []plex.Library {
+	if len(exclude) == 0 {
+		return libs
+	}
+	kept := libs[:0]
+	for _, lib := range libs {
+		if exclude[lib.Key] {
+			fmt.Printf("[INFO] Excluding %s library: %s (ID: %s)\n", kind, lib.Title, lib.Key)
+			continue
+		}
+		kept = append(kept, lib)
+	}
+	return kept
 }
 
 // findLibraryName returns the library title for the given ID, or the fallback if not found.
@@ -221,6 +238,11 @@ func handleNormalMode(cfg *config.Config, processor *media.Processor, movieLibra
 		}
 		os.Exit(0)
 	}()
+
+	if cfg.WebhookOnly {
+		fmt.Println("[INFO] WEBHOOK_ONLY=true: skipping startup full scan and periodic timer; webhook server is the only trigger")
+		select {}
+	}
 
 	fmt.Printf("[INFO] Starting periodic processing interval: %v\n", cfg.ProcessTimer)
 
