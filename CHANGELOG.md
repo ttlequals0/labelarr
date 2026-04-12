@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1] - 2026-04-12
+
+### Added
+- `MOVIE_LIBRARY_EXCLUDE` / `TV_LIBRARY_EXCLUDE`: comma-separated library
+  IDs to skip when `*_PROCESS_ALL=true`. Excluded libraries are filtered
+  from both timer-driven processing and webhook routing.
+- `WEBHOOK_ONLY=true`: skips the startup full scan and the periodic timer
+  entirely, leaving the webhook server as the only trigger. Requires
+  `WEBHOOK_ENABLED=true`.
+
+### Fixed
+- Webhook items are no longer silently dropped when a full library scan is
+  in progress. `ProcessSingleItem` now waits for the per-library slot to
+  free up (polling every 5s, bounded to a 2-hour deadline) instead of
+  logging a fake "queuing for next cycle" and returning early.
+
 ## [1.2.0] - 2026-04-10
 
 ### Added

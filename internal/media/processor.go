@@ -190,7 +190,141 @@ func (p *Processor) applyKeywordPrefix(keywords []string) []string {
 }
 
 // ProcessAllItems processes all items in the specified library
+// ProcessSingleItem processes a single item by rating key. Used by webhooks to
+// tag only the newly added item instead of scanning the entire library.
+// ProcessSingleItem processes a single item by rating key. Used by webhooks to
+// tag only the newly added item instead of scanning the entire library.
+func (p *Processor) ProcessSingleItem(ratingKey, libraryID string, mediaType MediaType) error {
+	const (
+		pollInterval = 5 * time.Second
+		maxWait      = 2 * time.Hour
+	)
+	deadline := time.Now().Add(maxWait)
+	logged := false
+	for {
+		p.processingMu.Lock()
+		if !p.processing[libraryID] {
+			p.processing[libraryID] = true
+			p.processingMu.Unlock()
+			break
+		}
+		p.processingMu.Unlock()
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out after %s waiting for library %s to free up for item %s", maxWait, libraryID, ratingKey)
+		}
+		if !logged {
+			fmt.Printf("[INFO] Library %s busy (scan in progress); webhook item %s will wait until it frees\n", libraryID, ratingKey)
+			logged = true
+		}
+		time.Sleep(pollInterval)
+	}
+	defer func() {
+		p.processingMu.Lock()
+		delete(p.processing, libraryID)
+		p.processingMu.Unlock()
+	}()
+
+	var item MediaItem
+
+	switch mediaType {
+	case MediaTypeMovie:
+		movie, err := p.plexClient.GetMovieDetails(ratingKey)
+		if err != nil {
+			return fmt.Errorf("failed to fetch movie %s: %w", ratingKey, err)
+		}
+		item = movie
+	case MediaTypeTV:
+		show, err := p.plexClient.GetTVShowDetails(ratingKey)
+		if err != nil {
+			return fmt.Errorf("failed to fetch TV show %s: %w", ratingKey, err)
+		}
+		item = show
+	default:
+		return fmt.Errorf("unsupported media type: %s", mediaType)
+	}
+
+	fmt.Printf("[WEBHOOK] Processing single item: %s (%d)\n", item.GetTitle(), item.GetYear())
+
+	tmdbID := p.extractTMDbID(item, mediaType)
+	if tmdbID == "" {
+		fmt.Printf("[SKIP] No TMDb ID found for: %s\n", item.GetTitle())
+		return nil
+	}
+
+	keywords, err := p.getKeywords(tmdbID, mediaType)
+	if err != nil {
+		return fmt.Errorf("failed to fetch keywords for TMDb ID %s: %w", tmdbID, err)
+	}
+
+	keywords = p.applyKeywordPrefix(keywords)
+
+	details, err := p.getItemDetails(item.GetRatingKey(), mediaType)
+	if err != nil {
+		return fmt.Errorf("failed to fetch item details: %w", err)
+	}
+
+	currentValues := p.extractCurrentValues(details)
+
+	currentValuesMap := make(map[string]bool)
+	for _, val := range currentValues {
+		currentValuesMap[strings.ToLower(val)] = true
+	}
+
+	allExist := true
+	for _, kw := range keywords {
+		if !currentValuesMap[strings.ToLower(kw)] {
+			allExist = false
+			break
+		}
+	}
+
+	if allExist && !p.config.ForceUpdate {
+		fmt.Printf("[OK] %s already has all %d keywords\n", item.GetTitle(), len(keywords))
+		return nil
+	}
+
+	source := p.getTMDbIDSource(item, mediaType, tmdbID)
+	fmt.Printf("[KEY] TMDb ID: %s (source: %s)\n", tmdbID, source)
+	fmt.Printf("[SYNC] Applying %d keywords to %s field for %s\n", len(keywords), p.config.UpdateField, item.GetTitle())
+
+	if err := p.syncFieldWithKeywords(item.GetRatingKey(), libraryID, currentValues, keywords, mediaType); err != nil {
+		return fmt.Errorf("failed to sync keywords for %s: %w", item.GetTitle(), err)
+	}
+
+	fmt.Printf("[OK] Successfully applied %d keywords to %s\n", len(keywords), item.GetTitle())
+
+	// Export if enabled
+	if p.exporter != nil {
+		mergedLabels := append(currentValues, keywords...)
+		fileInfos, err := p.extractFileInfos(details, mediaType)
+		if err == nil && len(fileInfos) > 0 {
+			if err := p.exporter.ExportItemWithSizes(item.GetTitle(), mergedLabels, fileInfos); err != nil {
+				fmt.Printf("[WARN] Export failed for %s: %v\n", item.GetTitle(), err)
+			}
+		}
+	}
+
+	if p.storage != nil {
+		processedItem := &storage.ProcessedItem{
+			RatingKey:      item.GetRatingKey(),
+			Title:          item.GetTitle(),
+			TMDbID:         tmdbID,
+			LastProcessed:  time.Now(),
+			KeywordsSynced: true,
+			UpdateField:    p.config.UpdateField,
+		}
+		if err := p.storage.Set(processedItem); err != nil {
+			fmt.Printf("[WARN] Failed to save processed item to storage: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
 func (p *Processor) ProcessAllItems(libraryID string, libraryName string, mediaType MediaType) error {
+	// Unlike ProcessSingleItem, this path skips when the library is busy:
+	// the timer will re-fire on the next cycle, so waiting here would only
+	// stack redundant full scans behind each other.
 	p.processingMu.Lock()
 	if p.processing[libraryID] {
 		p.processingMu.Unlock()
