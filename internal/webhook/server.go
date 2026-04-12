@@ -43,7 +43,6 @@ type PlexWebhookPayload struct {
 		LibrarySectionTitle string `json:"librarySectionTitle"`
 		RatingKey           string `json:"ratingKey"`
 		Key                 string `json:"key"`
-		GUID                string `json:"guid"`
 		Type                string `json:"type"`
 		Title               string `json:"title"`
 		Year                int    `json:"year"`

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.3] - 2026-04-12
+
+### Fixed
+- Every Plex webhook delivery was being rejected with `HTTP 400` because
+  `PlexWebhookPayload.Metadata.GUID` was typed as `string`, while Plex
+  sends it as an array of objects (`[{id:"imdb://..."}, ...]`) for
+  multi-provider items. `json.Unmarshal` failed before reaching the
+  event handler. The unused field has been removed; unknown JSON fields
+  are ignored by the decoder, so the shape no longer matters.
+
 ## [1.2.2] - 2026-04-12
 
 ### Changed
