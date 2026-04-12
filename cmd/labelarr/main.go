@@ -216,9 +216,11 @@ func handleRemoveMode(cfg *config.Config, processor *media.Processor, movieLibra
 func handleNormalMode(cfg *config.Config, processor *media.Processor, movieLibraries, tvLibraries []plex.Library) {
 	displayLibrarySelection(cfg, movieLibraries, tvLibraries)
 
+	scanner := &scanRunner{cfg: cfg, processor: processor, movieLibs: movieLibraries, tvLibs: tvLibraries}
+
 	var webhookServer *webhook.Server
 	if cfg.WebhookEnabled {
-		webhookServer = webhook.NewServer(cfg, processor, movieLibraries, tvLibraries)
+		webhookServer = webhook.NewServer(cfg, processor, movieLibraries, tvLibraries, scanner)
 		if err := webhookServer.Start(); err != nil {
 			fmt.Printf("[ERROR] %v\n", err)
 			os.Exit(1)
@@ -246,41 +248,66 @@ func handleNormalMode(cfg *config.Config, processor *media.Processor, movieLibra
 
 	fmt.Printf("[INFO] Starting periodic processing interval: %v\n", cfg.ProcessTimer)
 
-	processFunc := func() {
-		processor.ClearCaches()
-
-		if len(movieLibraries) > 0 {
-			forEachLibrary(cfg.MovieProcessAll, cfg.MovieLibraryID, movieLibraries, "Movies", func(id, name string) {
-				fmt.Printf("[MOVIE] Processing library: %s (ID: %s)\n", name, id)
-				if err := processor.ProcessAllItems(id, name, media.MediaTypeMovie); err != nil {
-					fmt.Printf("[ERROR] Error processing movies: %v\n", err)
-				}
-			})
-		}
-
-		if cfg.ProcessTVShows() {
-			forEachLibrary(cfg.TVProcessAll, cfg.TVLibraryID, tvLibraries, "TV Shows", func(id, name string) {
-				fmt.Printf("[TV] Processing TV library: %s (ID: %s)\n", name, id)
-				if err := processor.ProcessAllItems(id, name, media.MediaTypeTV); err != nil {
-					fmt.Printf("[ERROR] Error processing TV shows: %v\n", err)
-				}
-			})
-		}
-
-		if cfg.HasExportEnabled() {
-			writeExportFiles(cfg, processor)
-		}
-	}
-
-	processFunc()
+	scanner.RunAll()
 
 	ticker := time.NewTicker(cfg.ProcessTimer)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		fmt.Printf("\n[TIMER] Timer triggered - processing at %s\n", time.Now().Format("15:04:05"))
-		processFunc()
+		scanner.RunAll()
 	}
+}
+
+// scanRunner implements webhook.Scanner. Used by both the periodic timer and
+// the /scan HTTP endpoint.
+type scanRunner struct {
+	cfg       *config.Config
+	processor *media.Processor
+	movieLibs []plex.Library
+	tvLibs    []plex.Library
+}
+
+func (r *scanRunner) RunAll() {
+	r.processor.ClearCaches()
+
+	if len(r.movieLibs) > 0 {
+		forEachLibrary(r.cfg.MovieProcessAll, r.cfg.MovieLibraryID, r.movieLibs, "Movies", func(id, name string) {
+			fmt.Printf("[MOVIE] Processing library: %s (ID: %s)\n", name, id)
+			if err := r.processor.ProcessAllItems(id, name, media.MediaTypeMovie); err != nil {
+				fmt.Printf("[ERROR] Error processing movies: %v\n", err)
+			}
+		})
+	}
+
+	if r.cfg.ProcessTVShows() {
+		forEachLibrary(r.cfg.TVProcessAll, r.cfg.TVLibraryID, r.tvLibs, "TV Shows", func(id, name string) {
+			fmt.Printf("[TV] Processing TV library: %s (ID: %s)\n", name, id)
+			if err := r.processor.ProcessAllItems(id, name, media.MediaTypeTV); err != nil {
+				fmt.Printf("[ERROR] Error processing TV shows: %v\n", err)
+			}
+		})
+	}
+
+	if r.cfg.HasExportEnabled() {
+		writeExportFiles(r.cfg, r.processor)
+	}
+}
+
+func (r *scanRunner) RunLibrary(libraryID, libraryName string, mediaType media.MediaType) error {
+	r.processor.ClearCaches()
+	tag := "[MOVIE]"
+	if mediaType == media.MediaTypeTV {
+		tag = "[TV]"
+	}
+	fmt.Printf("%s Processing library: %s (ID: %s)\n", tag, libraryName, libraryID)
+	if err := r.processor.ProcessAllItems(libraryID, libraryName, mediaType); err != nil {
+		return err
+	}
+	if r.cfg.HasExportEnabled() {
+		writeExportFiles(r.cfg, r.processor)
+	}
+	return nil
 }
 
 func writeExportFiles(cfg *config.Config, processor *media.Processor) {
