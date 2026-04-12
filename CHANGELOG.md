@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0] - 2026-04-12
+
+### Added
+- `POST /scan` endpoint on the webhook server for manual scan triggers.
+  - `POST /scan` runs a full scan across all non-excluded libraries.
+  - `POST /scan?library=<id|name>` scans a single library; `library`
+    accepts the numeric Plex section ID or a case-insensitive library
+    title.
+  - Returns `202 Accepted` immediately; the scan runs in the
+    background. Returns `409 Conflict` if a scan is already in
+    progress, `404 Not Found` if the library param does not match, and
+    `405 Method Not Allowed` for non-POST requests.
+  - Works in `WEBHOOK_ONLY=true` mode — enables ad-hoc catchup scans
+    without toggling environment variables.
+
 ## [1.2.3] - 2026-04-12
 
 ### Fixed

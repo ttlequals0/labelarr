@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,16 +65,25 @@ type pendingWork struct {
 	gen         uint64
 }
 
+// Scanner kicks off full or per-library scan cycles. Implemented by main.
+type Scanner interface {
+	RunAll()
+	RunLibrary(libraryID, libraryName string, mediaType media.MediaType) error
+}
+
 type Server struct {
 	config     *config.Config
 	processor  *media.Processor
+	scanner    Scanner
 	httpServer *http.Server
 	libraryMap map[string]libraryInfo
 	pending    map[string]*pendingWork
 	pendingMu  sync.Mutex
+	scanMu     sync.Mutex
+	scanning   bool
 }
 
-func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []plex.Library) *Server {
+func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []plex.Library, scanner Scanner) *Server {
 	libMap := make(map[string]libraryInfo, len(movieLibs)+len(tvLibs))
 	for _, lib := range movieLibs {
 		libMap[lib.Key] = libraryInfo{name: lib.Title, mediaType: media.MediaTypeMovie}
@@ -85,6 +95,7 @@ func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []pl
 	return &Server{
 		config:     cfg,
 		processor:  proc,
+		scanner:    scanner,
 		libraryMap: libMap,
 		pending:    make(map[string]*pendingWork),
 	}
@@ -93,6 +104,7 @@ func NewServer(cfg *config.Config, proc *media.Processor, movieLibs, tvLibs []pl
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", s.handleWebhook)
+	mux.HandleFunc("/scan", s.handleScan)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
@@ -199,6 +211,80 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.scanner == nil {
+		http.Error(w, "Scanner unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	libParam := r.URL.Query().Get("library")
+
+	var (
+		targetID   string
+		targetName string
+		targetMT   media.MediaType
+	)
+	if libParam != "" {
+		id, info, ok := s.findLibrary(libParam)
+		if !ok {
+			http.Error(w, "Library not found", http.StatusNotFound)
+			return
+		}
+		targetID, targetName, targetMT = id, info.name, info.mediaType
+	}
+
+	s.scanMu.Lock()
+	if s.scanning {
+		s.scanMu.Unlock()
+		http.Error(w, "Scan already in progress", http.StatusConflict)
+		return
+	}
+	s.scanning = true
+	s.scanMu.Unlock()
+
+	scope := "all libraries"
+	if libParam != "" {
+		scope = fmt.Sprintf("library %s (ID: %s)", targetName, targetID)
+	}
+	fmt.Printf("[INFO] Manual scan triggered via /scan from %s: %s\n", r.RemoteAddr, scope)
+
+	go func() {
+		defer func() {
+			s.scanMu.Lock()
+			s.scanning = false
+			s.scanMu.Unlock()
+			fmt.Println("[INFO] Manual scan complete")
+		}()
+		if libParam == "" {
+			s.scanner.RunAll()
+			return
+		}
+		if err := s.scanner.RunLibrary(targetID, targetName, targetMT); err != nil {
+			fmt.Printf("[ERROR] Manual scan of %s failed: %v\n", targetName, err)
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprintf(w, "scan started: %s\n", scope)
+}
+
+func (s *Server) findLibrary(param string) (string, libraryInfo, bool) {
+	if info, ok := s.libraryMap[param]; ok {
+		return param, info, true
+	}
+	lower := strings.ToLower(param)
+	for id, info := range s.libraryMap {
+		if strings.ToLower(info.name) == lower {
+			return id, info, true
+		}
+	}
+	return "", libraryInfo{}, false
 }
 
 func (s *Server) resolveMediaType(libraryID, sectionType string) media.MediaType {

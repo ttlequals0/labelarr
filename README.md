@@ -172,6 +172,27 @@ The webhook server runs alongside the existing timer. Both can be active at the 
 
 A health check is available at `/health`.
 
+### Manual Scan Trigger
+
+`POST /scan` on the webhook server kicks off a scan cycle without waiting for the timer. Useful when operating in `WEBHOOK_ONLY=true` mode or after extended downtime.
+
+```bash
+# Full scan of all non-excluded libraries
+curl -X POST http://labelarr:9090/scan
+
+# Scan a single library by Plex section ID
+curl -X POST "http://labelarr:9090/scan?library=22"
+
+# Scan a single library by name (case-insensitive)
+curl -X POST "http://labelarr:9090/scan?library=Movies"
+```
+
+Responses:
+- `202 Accepted` — scan started in the background
+- `409 Conflict` — a scan is already in progress
+- `404 Not Found` — `library` param did not match any configured library
+- `405 Method Not Allowed` — non-POST request
+
 ## Batch Processing
 
 Large libraries (4000+ items) can overwhelm Radarr/Sonarr APIs with thousands of requests. Batch processing breaks the work into chunks with pauses between them.
