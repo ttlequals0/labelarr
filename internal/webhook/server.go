@@ -135,18 +135,37 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		fmt.Printf("[WEBHOOK] 400 ParseMultipartForm: content-type=%q content-length=%d err=%v\n",
+			r.Header.Get("Content-Type"), r.ContentLength, err)
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
 	payloadStr := r.FormValue("payload")
 	if payloadStr == "" {
+		formKeys := make([]string, 0, len(r.Form))
+		for k := range r.Form {
+			formKeys = append(formKeys, k)
+		}
+		fileKeys := []string{}
+		if r.MultipartForm != nil {
+			for k := range r.MultipartForm.File {
+				fileKeys = append(fileKeys, k)
+			}
+		}
+		fmt.Printf("[WEBHOOK] 400 MissingPayload: content-type=%q form_keys=%v file_keys=%v\n",
+			r.Header.Get("Content-Type"), formKeys, fileKeys)
 		http.Error(w, "Missing payload", http.StatusBadRequest)
 		return
 	}
 
 	var payload PlexWebhookPayload
 	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+		snippet := payloadStr
+		if len(snippet) > 300 {
+			snippet = snippet[:300]
+		}
+		fmt.Printf("[WEBHOOK] 400 InvalidPayload: err=%v payload_snippet=%q\n", err, snippet)
 		http.Error(w, "Invalid payload", http.StatusBadRequest)
 		return
 	}

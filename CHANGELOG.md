@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.2] - 2026-04-12
+
+### Changed
+- Webhook 400 responses now log the specific failure reason (parse error,
+  missing payload field, or JSON unmarshal error) along with
+  `Content-Type`, form/file part keys, and a payload snippet. Previously
+  all three paths returned 400 with no log, making Plex delivery failures
+  invisible.
+
 ## [1.2.1] - 2026-04-12
 
 ### Added
