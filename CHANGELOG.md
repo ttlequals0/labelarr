@@ -10,6 +10,11 @@
 ### Added
 - `PLEX_INSECURE_SKIP_VERIFY` environment variable (default `false`).
 
+### Changed
+- Bumped Docker build base images to `golang:1.26-alpine` (builder) and `alpine:3.22` (runtime) to pick up patched Go stdlib and Alpine packages. Clears 1 CRITICAL + 8 HIGH CVEs surfaced by Trivy on the previous `golang:1.23-alpine` / `alpine:3.21` base (CVE-2025-68121, CVE-2025-58183, CVE-2025-61726/28/29, CVE-2026-25679/32280/32281/32283).
+- `go.mod` now requires Go 1.26; `release.yml` `actions/setup-go` pinned to `1.26`.
+- `.dockerignore` hardened to exclude `.env*`, `*.pem`, `*.key`, `.claude`, `.github`, `CLAUDE.md`, `PR_DESCRIPTION.md`, `tmp/`.
+
 ## [1.3.0] - 2026-04-12
 
 ### Added
