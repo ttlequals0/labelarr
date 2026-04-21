@@ -89,6 +89,7 @@ Pick one approach per media type:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PLEX_REQUIRES_HTTPS` | `false` | Use HTTPS for Plex connection |
+| `PLEX_INSECURE_SKIP_VERIFY` | `false` | Skip TLS certificate verification for Plex. Only takes effect when `PLEX_REQUIRES_HTTPS=true`. Enable only for self-signed certs; a `[WARN]` line is logged at startup. |
 | `UPDATE_FIELD` | `label` | Field to update: `label` or `genre` |
 | `PROCESS_TIMER` | `1h` | How often to run (e.g. `30m`, `2h`, `24h`) |
 | `VERBOSE_LOGGING` | `false` | Show detailed lookup and matching info |
