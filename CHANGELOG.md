@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.1] - 2026-04-21
+
+### Security
+- Plex TLS certificate verification is now enabled by default. Previously, `InsecureSkipVerify` was hardcoded to `true`, which silently trusted any server certificate. Set `PLEX_INSECURE_SKIP_VERIFY=true` to opt back into skip-verify (e.g., for self-signed Plex certs). A `[WARN]` line is logged at startup when the flag is on. Resolves CodeQL `go/disabled-certificate-check`.
+- Export paths are now validated to stay within `EXPORT_LOCATION`. Library names that resolve to `.`, `..`, or empty after sanitization are rejected, and a `safeJoin` helper verifies every export path stays inside the export root before writing. Resolves CodeQL `go/path-injection`.
+- `.github/workflows/release.yml` now declares a least-privilege top-level `permissions: contents: read`. Per-job elevated permissions on `create-release`, `build-binaries`, and `publish-docker` are unchanged. Resolves CodeQL `actions/missing-workflow-permissions`.
+
+### Added
+- `PLEX_INSECURE_SKIP_VERIFY` environment variable (default `false`).
+
 ## [1.3.0] - 2026-04-12
 
 ### Added

@@ -21,6 +21,9 @@ on:
       - '.gitignore'
       - 'example/**'
 
+permissions:
+  contents: read
+
 jobs:
   check-changes:
     runs-on: ubuntu-latest

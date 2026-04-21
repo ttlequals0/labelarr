@@ -10,21 +10,22 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Protocol            string
-	PlexServer          string
-	PlexPort            string
-	PlexToken           string
-	MovieLibraryID      string
-	MovieProcessAll     bool
-	MovieLibraryExclude []string
-	TVLibraryID         string
-	TVProcessAll        bool
-	TVLibraryExclude    []string
-	WebhookOnly         bool
-	UpdateField         string
-	RemoveMode          string
-	TMDbReadAccessToken string
-	ProcessTimer        time.Duration
+	Protocol               string
+	PlexInsecureSkipVerify bool
+	PlexServer             string
+	PlexPort               string
+	PlexToken              string
+	MovieLibraryID         string
+	MovieProcessAll        bool
+	MovieLibraryExclude    []string
+	TVLibraryID            string
+	TVProcessAll           bool
+	TVLibraryExclude       []string
+	WebhookOnly            bool
+	UpdateField            string
+	RemoveMode             string
+	TMDbReadAccessToken    string
+	ProcessTimer           time.Duration
 
 	// Radarr configuration
 	RadarrURL    string
@@ -67,20 +68,21 @@ type Config struct {
 // Load loads configuration from environment variables
 func Load() *Config {
 	config := &Config{
-		PlexServer:          os.Getenv("PLEX_SERVER"),
-		PlexPort:            os.Getenv("PLEX_PORT"),
-		PlexToken:           os.Getenv("PLEX_TOKEN"),
-		MovieLibraryID:      os.Getenv("MOVIE_LIBRARY_ID"),
-		MovieProcessAll:     getBoolEnvWithDefault("MOVIE_PROCESS_ALL", false),
-		MovieLibraryExclude: parseCSV(os.Getenv("MOVIE_LIBRARY_EXCLUDE")),
-		TVLibraryID:         os.Getenv("TV_LIBRARY_ID"),
-		TVProcessAll:        getBoolEnvWithDefault("TV_PROCESS_ALL", false),
-		TVLibraryExclude:    parseCSV(os.Getenv("TV_LIBRARY_EXCLUDE")),
-		WebhookOnly:         getBoolEnvWithDefault("WEBHOOK_ONLY", false),
-		UpdateField:         getEnvWithDefault("UPDATE_FIELD", "label"),
-		RemoveMode:          os.Getenv("REMOVE"),
-		TMDbReadAccessToken: os.Getenv("TMDB_READ_ACCESS_TOKEN"),
-		ProcessTimer:        getDurationEnvWithDefault("PROCESS_TIMER", "1h"),
+		PlexInsecureSkipVerify: getBoolEnvWithDefault("PLEX_INSECURE_SKIP_VERIFY", false),
+		PlexServer:             os.Getenv("PLEX_SERVER"),
+		PlexPort:               os.Getenv("PLEX_PORT"),
+		PlexToken:              os.Getenv("PLEX_TOKEN"),
+		MovieLibraryID:         os.Getenv("MOVIE_LIBRARY_ID"),
+		MovieProcessAll:        getBoolEnvWithDefault("MOVIE_PROCESS_ALL", false),
+		MovieLibraryExclude:    parseCSV(os.Getenv("MOVIE_LIBRARY_EXCLUDE")),
+		TVLibraryID:            os.Getenv("TV_LIBRARY_ID"),
+		TVProcessAll:           getBoolEnvWithDefault("TV_PROCESS_ALL", false),
+		TVLibraryExclude:       parseCSV(os.Getenv("TV_LIBRARY_EXCLUDE")),
+		WebhookOnly:            getBoolEnvWithDefault("WEBHOOK_ONLY", false),
+		UpdateField:            getEnvWithDefault("UPDATE_FIELD", "label"),
+		RemoveMode:             os.Getenv("REMOVE"),
+		TMDbReadAccessToken:    os.Getenv("TMDB_READ_ACCESS_TOKEN"),
+		ProcessTimer:           getDurationEnvWithDefault("PROCESS_TIMER", "1h"),
 
 		// Radarr configuration
 		RadarrURL:    os.Getenv("RADARR_URL"),

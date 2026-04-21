@@ -21,8 +21,11 @@ type Client struct {
 
 // NewClient creates a new Plex client
 func NewClient(cfg *config.Config) *Client {
+	if cfg.PlexInsecureSkipVerify {
+		fmt.Printf("[WARN] TLS certificate verification is disabled for Plex (PLEX_INSECURE_SKIP_VERIFY=true)\n")
+	}
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.PlexInsecureSkipVerify},
 	}
 
 	return &Client{
