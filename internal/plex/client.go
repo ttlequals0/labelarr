@@ -7,11 +7,30 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/nullable-eth/labelarr/internal/config"
 )
+
+// urlSecretRedactor matches credential query params so tokens don't leak into
+// error messages produced by net/http (which embed the full request URL).
+var urlSecretRedactor = regexp.MustCompile(`([?&](?:X-Plex-Token|apikey|api_key)=)[^&\s"]+`)
+
+func redactURLSecrets(s string) string {
+	return urlSecretRedactor.ReplaceAllString(s, "${1}REDACTED")
+}
+
+// safeDo wraps httpClient.Do so transport errors have their request URL
+// stripped of secret query params before bubbling up.
+func (c *Client) safeDo(req *http.Request) (*http.Response, error) {
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s", redactURLSecrets(err.Error()))
+	}
+	return resp, nil
+}
 
 // Client represents a Plex API client
 type Client struct {
@@ -45,7 +64,7 @@ func (c *Client) GetAllLibraries() ([]Library, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch libraries: %w", err)
 	}
@@ -80,7 +99,7 @@ func (c *Client) GetMoviesFromLibrary(libraryID string) ([]Movie, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch movies: %w", err)
 	}
@@ -114,7 +133,7 @@ func (c *Client) GetMovieDetails(ratingKey string) (*Movie, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch movie details: %w", err)
 	}
@@ -165,7 +184,7 @@ func (c *Client) GetTVShowsFromLibrary(libraryID string) ([]TVShow, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch TV shows: %w", err)
 	}
@@ -199,7 +218,7 @@ func (c *Client) GetTVShowDetails(ratingKey string) (*TVShow, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch TV show details: %w", err)
 	}
@@ -237,7 +256,7 @@ func (c *Client) GetTVShowEpisodes(ratingKey string) ([]Episode, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch TV show episodes: %w", err)
 	}
@@ -271,7 +290,7 @@ func (c *Client) GetAllTVShowEpisodes(ratingKey string) ([]Episode, error) {
 	req.Header.Set("X-Plex-Token", c.config.PlexToken)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch all TV show episodes: %w", err)
 	}
@@ -304,7 +323,7 @@ func (c *Client) updateMediaField(mediaID, libraryID string, keywords []string, 
 	// Parse the URL to add query parameters properly
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
+		return fmt.Errorf("failed to parse URL: %s", redactURLSecrets(err.Error()))
 	}
 
 	// Create query parameters
@@ -332,7 +351,7 @@ func (c *Client) updateMediaField(mediaID, libraryID string, keywords []string, 
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return fmt.Errorf("failed to update media field: %w", err)
 	}
@@ -359,7 +378,7 @@ func (c *Client) removeMediaFieldKeywords(mediaID, libraryID string, valuesToRem
 	// Parse the URL to add query parameters properly
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
+		return fmt.Errorf("failed to parse URL: %s", redactURLSecrets(err.Error()))
 	}
 
 	// Create query parameters
@@ -391,7 +410,7 @@ func (c *Client) removeMediaFieldKeywords(mediaID, libraryID string, valuesToRem
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.safeDo(req)
 	if err != nil {
 		return fmt.Errorf("failed to remove media field keywords: %w", err)
 	}

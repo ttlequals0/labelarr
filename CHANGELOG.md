@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.2] - 2026-04-21
+
+### Security
+- Plex client error messages now redact `X-Plex-Token`, `apikey`, and `api_key` query-string values. Previously a transport failure (e.g. TLS cert rejection) would bubble up Go's `*url.Error`, which embeds the full request URL including the Plex token, leaking it into logs/Loki. All `c.httpClient.Do` calls are now routed through a `safeDo` wrapper that scrubs the error string before returning.
+
 ## [1.3.1] - 2026-04-21
 
 ### Security
